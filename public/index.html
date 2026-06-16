@@ -1,0 +1,221 @@
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chat App</title>
+</head>
+<body>
+
+<h1>Chatting...</h1>
+
+<h3>Online Users</h3>
+<ul id="usersList"></ul>
+
+<p id="typing"></p>
+
+<input id="message" placeholder="Enter message">
+<button id="sendBtn">Send</button>
+
+<br><br>
+
+<input id="roomInput" placeholder="Room name">
+<button id="joinRoomBtn">Join Room</button>
+
+<br><br>
+
+<input id="dmInput" placeholder="DM message">
+<button id="dmBtn">Send DM</button>
+
+<div id="messages"></div>
+<p id="roomStatus">Global Chat</p>
+<button id="leaveRoomBtn">Back To Global Chat</button>
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+
+const socket = io();
+
+const username = prompt("Enter username") || "anonymous";
+
+socket.emit("new-user", username);
+
+const sendBtn = document.getElementById("sendBtn");
+const messageInput = document.getElementById("message");
+const usersList = document.getElementById("usersList");
+const allmessages = document.getElementById("messages");
+const typingText = document.getElementById("typing");
+
+let currentRoom = null;
+let selectedUser = null;
+
+document.getElementById("joinRoomBtn").addEventListener("click", () => {
+
+    const room = document.getElementById("roomInput").value;
+
+    if (!room) return;
+
+    currentRoom = room;
+
+    socket.emit("join-room", room);
+
+});
+document.getElementById("leaveRoomBtn").addEventListener("click", () => {
+
+    socket.emit("leave-room");
+
+    currentRoom = null;
+
+    alert("You are now in Global Chat");
+
+});
+
+socket.on("joined-room", (room) => {
+    document.getElementById("roomStatus").innerText =
+        `Currently inside room: ${room}`;
+});
+socket.on("online-users", (users) => {
+
+    usersList.innerHTML = "";
+
+    users.forEach(user => {
+
+        if (user === username) return;
+
+        const li = document.createElement("li");
+
+        li.innerText = user;
+
+        li.onclick = () => {
+
+            selectedUser = user;
+
+            alert("Selected for DM: " + user);
+
+        };
+
+        usersList.appendChild(li);
+
+    });
+
+});
+
+socket.on("message", (data) => {
+
+    const p = document.createElement("p");
+
+    p.innerHTML =
+        `<strong>${data.username}</strong>: ${data.message}`;
+
+    allmessages.appendChild(p);
+
+});
+
+socket.on("user-joined", (msg) => {
+
+    const p = document.createElement("p");
+
+    p.innerHTML = msg;
+
+    allmessages.appendChild(p);
+
+});
+
+socket.on("user-left", (msg) => {
+
+    const p = document.createElement("p");
+
+    p.innerHTML = msg;
+
+    allmessages.appendChild(p);
+
+});
+
+socket.on("typing", (name) => {
+
+    typingText.innerText = `${name} is typing...`;
+
+});
+
+socket.on("stop-typing", () => {
+
+    typingText.innerText = "";
+
+});
+
+socket.on("private-message", (data) => {
+
+    const p = document.createElement("p");
+
+    p.innerHTML =
+        `<i>DM from ${data.fromUser}</i>: ${data.message}`;
+
+    allmessages.appendChild(p);
+
+});
+
+socket.on("left-room", () => {
+
+    alert("Returned to Global Chat");
+
+});
+document.getElementById("dmBtn").addEventListener("click", () => {
+
+    const message = document.getElementById("dmInput").value;
+
+    if (!selectedUser) {
+
+        alert("Select a user first");
+
+        return;
+
+    }
+
+    socket.emit("private-message", {
+        toUser: selectedUser,
+        message
+    });
+
+});
+
+messageInput.addEventListener("input", () => {
+
+    socket.emit("typing");
+
+    clearTimeout(window.typingTimeout);
+
+    window.typingTimeout = setTimeout(() => {
+
+        socket.emit("stop-typing");
+
+    }, 1000);
+
+});
+
+sendBtn.addEventListener("click", () => {
+
+    const message = messageInput.value;
+
+    if (!message.trim()) return;
+
+    if (currentRoom) {
+
+        socket.emit("room-message", {
+            room: currentRoom,
+            message
+        });
+
+    } else {
+
+        socket.emit("user-message", message);
+
+    }
+
+    messageInput.value = "";
+
+});
+
+</script>
+
+</body>
+</html>
