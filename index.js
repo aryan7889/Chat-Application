@@ -156,6 +156,10 @@ io.on("connection", (socket) => {
 
 });
 
+
+// so the new goal is to connect to the mongo db for the time stamp and the hostory management and after that 
+// adding login and the sign in thing in the application
+
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/", (req, res) => {
