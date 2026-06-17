@@ -26,11 +26,13 @@ io.on("connection", async(socket) => {
 
     console.log("Connected:", socket.id);
 
-    const oldMessages = await Message
-    .find()
+     const globalMessages = await Message.find({
+        room: "global"
+    })
     .sort({createdAt:1})
     .limit(50);
-    socket.emit("chat-history", oldMessages);
+
+    socket.emit("chat-history", globalMessages);
 
     socket.on("new-user", (username) => {
         if (!username) return;
@@ -60,7 +62,7 @@ io.on("connection", async(socket) => {
 
     });
 
-    socket.on("join-room", (roomname) => {
+    socket.on("join-room", async(roomname) => {
 
         if (!roomname) return;
 
@@ -73,6 +75,13 @@ io.on("connection", async(socket) => {
 
         socket.emit("joined-room", roomname);
 
+        const roomMessages = await Message.find({
+            room:roomname
+        })
+        .sort({createdAt:1})
+        .limit(50);
+
+        socket.emit("room-history",roomMessages);
     });
 
     socket.on("room-message", async({ room, message }) => {
@@ -196,3 +205,12 @@ app.get("/", (req, res) => {
 server.listen(1000, () => {
     console.log("Server Started on port 1000");
 });
+
+
+// to connect the blog application and the chat thing inside the blog where both can get connect.
+
+// ideas:
+// 1.like counter
+// 2.react
+// so if you want to connect we can do chatting
+// 

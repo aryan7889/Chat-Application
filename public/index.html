@@ -169,6 +169,18 @@ socket.on("chat-history",(messages)=>{
         allmessages.appendChild(p);
     });
 })
+
+
+socket.on("room-history",(messages)=>{
+    allmessages.innerHTML = "";
+    messages.forEach(data => {
+        const p = document.createElement("p");
+
+        p.innerHTML=`<strong>${data.username}</strong>: ${data.message}`;
+
+        allmessages.appendChild(p);
+    });
+})
 document.getElementById("dmBtn").addEventListener("click", () => {
 
     const message = document.getElementById("dmInput").value;
