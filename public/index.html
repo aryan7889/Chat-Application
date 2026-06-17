@@ -159,6 +159,16 @@ socket.on("left-room", () => {
     alert("Returned to Global Chat");
 
 });
+
+socket.on("chat-history",(messages)=>{
+    messages.forEach(data => {
+        const p = document.createElement("p");
+        p.innerHTML=
+        `<strong>${data.username}</strong>: ${data.message}`;
+
+        allmessages.appendChild(p);
+    });
+})
 document.getElementById("dmBtn").addEventListener("click", () => {
 
     const message = document.getElementById("dmInput").value;

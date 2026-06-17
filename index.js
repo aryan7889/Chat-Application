@@ -2,7 +2,8 @@ const http = require("http");
 const express = require("express");
 const path = require("path");
 const { Server } = require("socket.io");
-
+const mongoose = require("mongoose");
+const Message = require("./models/message");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
@@ -14,9 +15,22 @@ function updateOnlineUsers() {
     io.emit("online-users", Object.values(users));
 }
 
-io.on("connection", (socket) => {
+mongoose.connect("mongodb://127.0.0.1:27017/chatapp")
+.then(()=>{
+    console.log("MongoDb Connected");
+})
+.catch(err=>{
+    console.log(err);
+});
+io.on("connection", async(socket) => {
 
     console.log("Connected:", socket.id);
+
+    const oldMessages = await Message
+    .find()
+    .sort({createdAt:1})
+    .limit(50);
+    socket.emit("chat-history", oldMessages);
 
     socket.on("new-user", (username) => {
         if (!username) return;
@@ -27,11 +41,17 @@ io.on("connection", (socket) => {
         updateOnlineUsers();
     });
 
-    socket.on("user-message", (message) => {
+    socket.on("user-message", async(message) => {
 
         const username = users[socket.id];
 
         if (!username || !message.trim()) return;
+
+        await Message.create({
+            username,
+            message,
+            room:"global"
+        })
 
         io.emit("message", {
             username,
@@ -55,12 +75,17 @@ io.on("connection", (socket) => {
 
     });
 
-    socket.on("room-message", ({ room, message }) => {
+    socket.on("room-message", async({ room, message }) => {
 
         const username = users[socket.id];
 
         if (!username || !room || !message.trim()) return;
 
+        await Message.create({
+            username,
+            message,
+            room,
+        })
         io.to(room).emit("message", {
             username,
             message,
