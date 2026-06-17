@@ -217,3 +217,4 @@ server.listen(1000, () => {
 
 
 
+// the next thing is to add the authentication which is the toughest part in this app according to my understanding 
