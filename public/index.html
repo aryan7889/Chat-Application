@@ -120,5 +120,418 @@
     <button id="leaveRoomBtn">Back To Global Chat</button>
 </div>
 
+<script src="/socket.io/socket.io.js"></script>
+<script>
+let socket = null;
+let username = null;
+let currentRoom = null;
+let dmPartner = null;
+
+const authSection = document.getElementById("authSection");
+const chatSection = document.getElementById("chatSection");
+const authError = document.getElementById("authError");
+const loginForm = document.getElementById("loginForm");
+const signupForm = document.getElementById("signupForm");
+const loginTab = document.getElementById("loginTab");
+const signupTab = document.getElementById("signupTab");
+const sendBtn = document.getElementById("sendBtn");
+const messageInput = document.getElementById("message");
+const usersList = document.getElementById("usersList");
+const allmessages = document.getElementById("messages");
+const typingText = document.getElementById("typing");
+
+function showAuthError(message) {
+    authError.innerText = message || "";
+}
+
+function showLoginTab() {
+    loginTab.classList.add("active");
+    signupTab.classList.remove("active");
+    loginForm.classList.remove("hidden");
+    signupForm.classList.add("hidden");
+    showAuthError("");
+}
+
+function showSignupTab() {
+    signupTab.classList.add("active");
+    loginTab.classList.remove("active");
+    signupForm.classList.remove("hidden");
+    loginForm.classList.add("hidden");
+    showAuthError("");
+}
+
+function saveSession(token, user) {
+    localStorage.setItem("token", token);
+    localStorage.setItem("user", JSON.stringify(user));
+}
+
+function clearSession() {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+}
+
+function getToken() {
+    return localStorage.getItem("token");
+}
+
+function enterChat(user) {
+    username = user.username;
+    document.getElementById("currentUsername").innerText = username;
+    authSection.classList.add("hidden");
+    chatSection.classList.remove("hidden");
+    connectSocket();
+}
+
+function exitChat() {
+    if (socket) {
+        socket.disconnect();
+        socket = null;
+    }
+    username = null;
+    currentRoom = null;
+    dmPartner = null;
+    allmessages.innerHTML = "";
+    usersList.innerHTML = "";
+    typingText.innerText = "";
+    document.getElementById("roomStatus").innerText = "Global Chat";
+    chatSection.classList.add("hidden");
+    authSection.classList.remove("hidden");
+    showLoginTab();
+}
+
+async function apiRequest(url, options = {}) {
+    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+    const token = getToken();
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
+    const response = await fetch(url, { ...options, headers });
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(data.error || "Request failed");
+    }
+    return data;
+}
+
+async function handleAuthResponse(data) {
+    saveSession(data.token, data.user);
+    enterChat(data.user);
+}
+
+loginTab.addEventListener("click", showLoginTab);
+signupTab.addEventListener("click", showSignupTab);
+
+loginForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    showAuthError("");
+    try {
+        // so we have created a function above which would
+        //ask for the url and the option and in the option we need to give the method
+        //the body of the data and json stringfy works to change the js object to a json string
+        //so here we are sending the email and password to the server
+
+        // '{"email":"abc@gmail.com","password":"123456"}' this is the json data looks like
+
+        const data = await apiRequest("/api/auth/login", {
+            method: "POST",
+            body: JSON.stringify({
+                email: document.getElementById("loginEmail").value,
+                password: document.getElementById("loginPassword").value,
+            }),
+        });
+        await handleAuthResponse(data);
+        //this would save the data and also would save the session and make us enter the chat window
+
+    } catch (err) {
+        showAuthError(err.message);
+    }
+});
+
+signupForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    //this would make sure that page dont reload after going on the page.
+    showAuthError("");
+    try {
+        //this is also send the same thing first the url then the option to the api request function
+        //then this information is being added in the data constant.
+
+        const data = await apiRequest("/api/auth/register", {
+            method: "POST",
+            body: JSON.stringify({
+                username: document.getElementById("signupUsername").value,
+                email: document.getElementById("signupEmail").value,
+                password: document.getElementById("signupPassword").value,
+            }),
+        });
+        await handleAuthResponse(data);
+        //this would save the data and also would save the session and make us enter the chat window
+    } catch (err) {
+        showAuthError(err.message);
+    }
+});
+
+document.getElementById("logoutBtn").addEventListener("click", () => {
+    clearSession();
+    exitChat();
+});
+
+function renderDmMessage(data) {
+    const p = document.createElement("p");
+    if (data.fromUser === username) {
+        p.innerHTML = `<i>You to ${data.toUser}</i>: ${data.message}`;
+    } else {
+        p.innerHTML = `<i>DM from ${data.fromUser}</i>: ${data.message}`;
+    }
+    //basically a function to render the dm message and it would be shown in the allmessages div
+    allmessages.appendChild(p);
+}
+
+function isDmConversation(data) {
+    //{
+  //  fromUser: "Rahul",
+  //  toUser: "Aryan",
+  //  message: "Hello!"
+//
+    if (!dmPartner) return false;
+    //Without this line
+
+// Messages could appear even when you're in:
+
+// Global chat
+// Room chat
+
+// which would be confusing.
+    const users = [data.fromUser, data.toUser];
+
+    //Creates an array containing the two people involved in the message.
+    return users.includes(username) && users.includes(dmPartner);
+    //This checks if the current user is involved in the message and if the dm partner is involved in the message.
+}
+
+function connectSocket() {
+    //This connects the socket to the server and also sends the token to the server.
+    socket = io({
+        auth: { token: getToken() },
+    });
+
+    socket.on("connect_error", (err) => {
+        alert("Connection failed: " + err.message);
+        clearSession();
+        exitChat();
+    });
+
+    socket.on("online-users", (users) => {
+        usersList.innerHTML = "";
+        users.forEach(user => {
+            if (user === username) return;
+            const li = document.createElement("li");
+            li.innerText = user;
+            li.onclick = () => {
+                // This means:
+    // The DM input box shows "Alice".
+    // Messages will now be sent privately to Alice.
+    // You leave any room chat.
+    // The server is notified that you opened a DM with Alice.
+                document.getElementById("dmUserInput").value = user;
+                dmPartner = user;
+                currentRoom = null;
+                socket.emit("open-dm", user);
+            };
+            usersList.appendChild(li);
+        });
+    });
+
+    socket.on("message", (data) => {
+        if (dmPartner) return;
+        // checks if you are in a dm conversation and if you are then it will not show the message in the global chat.
+        const p = document.createElement("p");
+        p.innerHTML = `<strong>${data.username}</strong>: ${data.message}`;
+        allmessages.appendChild(p);
+    });
+
+    socket.on("user-joined", (msg) => {
+        if (dmPartner) return;
+        //This checks if you are in a dm conversation and if you are then it will not show the message in the global chat.
+        const p = document.createElement("p");
+        p.innerHTML = msg;
+        //This shows the message in the allmessages div.
+        allmessages.appendChild(p);
+    });
+
+    socket.on("user-left", (msg) => {
+        if (dmPartner) return;
+        const p = document.createElement("p");
+        p.innerHTML = msg;
+        allmessages.appendChild(p);
+    });
+
+    socket.on("typing", (name) => {
+        typingText.innerText = `${name} is typing...`;
+    });
+
+    socket.on("stop-typing", () => {
+        typingText.innerText = "";
+    });
+
+    socket.on("private-message", (data) => {
+        if (!isDmConversation(data)) return;
+        renderDmMessage(data);
+    });
+
+    socket.on("left-room", () => {
+        dmPartner = null;
+        currentRoom = null;
+        document.getElementById("roomStatus").innerText = "Global Chat";
+        alert("Returned to Global Chat");
+    });
+
+    socket.on("dm-history", ({ toUser, messages }) => {
+        // socket.emit("dm-history", {
+//     toUser: "Alice",
+//     messages: [
+//         {
+//             fromUser: "John",
+//             toUser: "Alice",
+//             message: "Hi Alice!"
+//         },
+//         {
+//             fromUser: "Alice",
+//             toUser: "John",
+//             message: "Hello John!"
+//         }
+//     ]
+// });
+        dmPartner = toUser;
+        currentRoom = null;
+        allmessages.innerHTML = "";
+        document.getElementById("roomStatus").innerText = `DM with: ${toUser}`;
+        messages.forEach(renderDmMessage);
+    });
+
+    socket.on("global-history", (messages) => {
+        allmessages.innerHTML = "";
+        dmPartner = null;
+        currentRoom = null;
+        document.getElementById("roomStatus").innerText = "Global Chat";
+        messages.forEach(data => {
+            const p = document.createElement("p");
+            p.innerHTML = `<strong>${data.username}</strong>: ${data.message}`;
+            allmessages.appendChild(p);
+        });
+    });
+
+    socket.on("chat-history", (messages) => {
+        messages.forEach(data => {
+            const p = document.createElement("p");
+            p.innerHTML = `<strong>${data.username}</strong>: ${data.message}`;
+            allmessages.appendChild(p);
+        });
+    });
+
+    socket.on("room-history", (messages) => {
+        allmessages.innerHTML = "";
+        dmPartner = null;
+        messages.forEach(data => {
+            const p = document.createElement("p");
+            p.innerHTML = `<strong>${data.username}</strong>: ${data.message}`;
+            allmessages.appendChild(p);
+        });
+    });
+
+    socket.on("joined-room", (room) => {
+        document.getElementById("roomStatus").innerText = `Currently inside room: ${room}`;
+    });
+}
+
+document.getElementById("joinRoomBtn").addEventListener("click", () => {
+    const room = document.getElementById("roomInput").value;
+    if (!room) return;
+    currentRoom = room;
+    dmPartner = null;
+    socket.emit("join-room", room);
+});
+
+document.getElementById("openDmBtn").addEventListener("click", () => {
+    const user = document.getElementById("dmUserInput").value.trim();
+    if (!user) return;
+    if (user === username) {
+        alert("You cannot DM yourself");
+        return;
+    }
+    socket.emit("open-dm", user);
+});
+
+document.getElementById("leaveRoomBtn").addEventListener("click", () => {
+    socket.emit("leave-room");
+});
+
+document.getElementById("dmBtn").addEventListener("click", () => {
+    const message = document.getElementById("dmInput").value;
+    if (!dmPartner) {
+        alert("Select a user from the online list first");
+        return;
+    }
+    if (!message.trim()) return;
+    socket.emit("private-message", {
+        toUser: dmPartner,
+        message,
+    });
+    document.getElementById("dmInput").value = "";
+});
+
+messageInput.addEventListener("input", () => {
+    socket.emit("typing");
+    //This is used to show the typing indicator.
+    clearTimeout(window.typingTimeout);
+    //This is used to clear the timeout.
+    window.typingTimeout = setTimeout(() => {
+        socket.emit("stop-typing");
+    }, 1000);
+});
+
+sendBtn.addEventListener("click", () => {
+    const message = messageInput.value;
+    if (!message.trim()) return;
+
+    if (dmPartner) {
+        alert("Use the DM input to send direct messages");
+        return;
+    }
+
+    if (currentRoom) {
+        socket.emit("room-message", {
+            room: currentRoom,
+            message,
+        });
+    } else {
+        socket.emit("user-message", message);
+    }
+
+    messageInput.value = "";
+});
+
+async function restoreSession() {
+    const token = getToken();
+    const savedUser = localStorage.getItem("user");
+    if (!token || !savedUser) return;
+
+    try {
+        const data = await apiRequest("/api/auth/me");
+        enterChat(data.user);
+    } catch {
+        clearSession();
+    }
+    // 🔹 Why we do this
+
+// Without this:
+
+// ❌ user would need to log in every refresh
+// ❌ session would not persist
+// ❌ bad UX
+}
+
+restoreSession();
+</script>
+
 </body>
 </html>
