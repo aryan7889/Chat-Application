@@ -181,12 +181,14 @@ io.on("connection", async (socket) => {
 
         socket.dmPartner = null;
 
+        // assigning the dm partner to the null and make sure that the user enter in the global chat
+
         const globalMessages = await Message.find({
             room: "global",
         })
         .sort({ createdAt: 1 })
         .limit(50);
-
+// makes sure to extract the message from the mongodb which are in the global chat 
         socket.emit("global-history", globalMessages);
         socket.emit("left-room");
     });
