@@ -4,6 +4,10 @@ const path = require("path");
 const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 const Message = require("./models/message");
+const DirectMessage = require("./models/directMessage");
+const authRoutes = require("./routes/auth");
+const { socketAuthMiddleware } = require("./middleware/auth");
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
@@ -16,205 +20,188 @@ function updateOnlineUsers() {
 }
 
 mongoose.connect("mongodb://127.0.0.1:27017/chatapp")
-.then(()=>{
+.then(() => {
     console.log("MongoDb Connected");
 })
-.catch(err=>{
+.catch(err => {
     console.log(err);
 });
-io.on("connection", async(socket) => {
 
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
+
+app.use("/api/auth", authRoutes);
+
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+io.use(socketAuthMiddleware);
+
+io.on("connection", async (socket) => {
     console.log("Connected:", socket.id);
 
-     const globalMessages = await Message.find({
-        room: "global"
+    const username = socket.user.username;
+    users[socket.id] = username;
+    userSocketMap[username] = socket.id;
+
+    const globalMessages = await Message.find({
+        room: "global",
     })
-    .sort({createdAt:1})
+    .sort({ createdAt: 1 })
     .limit(50);
 
     socket.emit("chat-history", globalMessages);
 
-    socket.on("new-user", (username) => {
-        if (!username) return;
-        users[socket.id] = username;
-        userSocketMap[username] = socket.id;
+    io.emit("user-joined", `${username} joined the chat`);
+    updateOnlineUsers();
 
-        io.emit("user-joined", `${username} joined the chat`);
-        updateOnlineUsers();
-    });
-
-    socket.on("user-message", async(message) => {
-
-        const username = users[socket.id];
-
-        if (!username || !message.trim()) return;
+    socket.on("user-message", async (message) => {
+        if (!message.trim()) return;
 
         await Message.create({
             username,
             message,
-            room:"global"
-        })
+            room: "global",
+        });
 
         io.emit("message", {
             username,
-            message
+            message,
         });
-
     });
 
-    socket.on("join-room", async(roomname) => {
-
+    socket.on("join-room", async (roomname) => {
         if (!roomname) return;
 
-
         if (socket.room) {
-        socket.leave(socket.room);
+            socket.leave(socket.room);
         }
+
+        socket.dmPartner = null;
         socket.room = roomname;
         socket.join(roomname);
 
         socket.emit("joined-room", roomname);
 
         const roomMessages = await Message.find({
-            room:roomname
+            room: roomname,
         })
-        .sort({createdAt:1})
+        .sort({ createdAt: 1 })
         .limit(50);
 
-        socket.emit("room-history",roomMessages);
+        socket.emit("room-history", roomMessages);
     });
 
-    socket.on("room-message", async({ room, message }) => {
-
-        const username = users[socket.id];
-
-        if (!username || !room || !message.trim()) return;
+    socket.on("room-message", async ({ room, message }) => {
+        if (!room || !message.trim()) return;
 
         await Message.create({
             username,
             message,
             room,
-        })
+        });
+
         io.to(room).emit("message", {
             username,
             message,
-            room
+            room,
         });
-
     });
 
     socket.on("typing", () => {
-
-        const username = users[socket.id];
-
-          if (!username) return;
-
-    if (socket.room) {
-
-        socket.broadcast.to(socket.room).emit("typing", username);
-
-    } else {
-
-   
-        socket.broadcast.emit("typing", username);
-
-    }
-
+        if (socket.room) {
+            socket.broadcast.to(socket.room).emit("typing", username);
+        } else {
+            socket.broadcast.emit("typing", username);
+        }
     });
 
     socket.on("stop-typing", () => {
-
-        
-    if (socket.room) {
-
-        socket.broadcast.to(socket.room).emit("stop-typing");
-
-    } else {
-
-        socket.broadcast.emit("stop-typing");
-
-    }
-
+        if (socket.room) {
+            socket.broadcast.to(socket.room).emit("stop-typing");
+        } else {
+            socket.broadcast.emit("stop-typing");
+        }
     });
 
-    socket.on("private-message", ({ toUser, message }) => {
+    socket.on("private-message", async ({ toUser, message }) => {
+        if (!toUser || !message.trim()) return;
 
-        const fromUser = users[socket.id];
+        await DirectMessage.create({
+            fromUser: username,
+            toUser,
+            message,
+        });
+
+        const payload = {
+            fromUser: username,
+            toUser,
+            message,
+        };
+
         const toSocketId = userSocketMap[toUser];
 
-        if (!fromUser || !toSocketId || !message.trim()) return;
+        if (toSocketId) {
+            io.to(toSocketId).emit("private-message", payload);
+        }
 
-        io.to(toSocketId).emit("private-message", {
-            fromUser,
-            message
-        });
-
-        socket.emit("private-message", {
-            fromUser,
-            message
-        });
-
+        socket.emit("private-message", payload);
     });
 
-    socket.on("leave-room", () => {
+    socket.on("open-dm", async (toUser) => {
+        if (!toUser || toUser === username) return;
 
-    if (socket.room) {
+        if (socket.room) {
+            socket.leave(socket.room);
+            socket.room = null;
+        }
 
-        socket.leave(socket.room);
+        socket.dmPartner = toUser;
 
-        socket.room = null;
+        const dmMessages = await DirectMessage.find({
+            $or: [
+                { fromUser: username, toUser },
+                { fromUser: toUser, toUser: username },
+            ],
+        })
+        .sort({ createdAt: 1 })
+        .limit(50);
 
+        socket.emit("dm-history", { toUser, messages: dmMessages });
+    });
+
+    socket.on("leave-room", async () => {
+        if (socket.room) {
+            socket.leave(socket.room);
+            socket.room = null;
+        }
+
+        socket.dmPartner = null;
+
+        const globalMessages = await Message.find({
+            room: "global",
+        })
+        .sort({ createdAt: 1 })
+        .limit(50);
+
+        socket.emit("global-history", globalMessages);
         socket.emit("left-room");
-
-    }
-
-});
+    });
 
     socket.on("disconnect", () => {
-
-        const username = users[socket.id];
-
         if (username) {
-
             io.emit("user-left", `${username} left the chat`);
-
             delete userSocketMap[username];
-
         }
 
         delete users[socket.id];
-
         updateOnlineUsers();
-
     });
-
 });
 
-
-// so the new goal is to connect to the mongo db for the time stamp and the hostory management and after that 
-// adding login and the sign in thing in the application
-
-app.use(express.static(path.join(__dirname, "public")));
-
-app.get("/", (req, res) => {
-
-    res.sendFile(path.join(__dirname, "public", "index.html"));
-
+server.listen(2000, () => {
+    console.log("Server Started on port 2000");
 });
 
-server.listen(1000, () => {
-    console.log("Server Started on port 1000");
-});
-
-
-// to connect the blog application and the chat thing inside the blog where both can get connect.
-
-// ideas:
-// 1.like counter
-// 2.react
-// so if you want to connect we can do chatting
 // 
-
-
-
-// the next thing is to add the authentication which is the toughest part in this app according to my understanding 
