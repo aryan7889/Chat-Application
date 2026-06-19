@@ -157,6 +157,8 @@ io.on("connection", async (socket) => {
             socket.room = null;
         }
 
+        // when ever the person is sending the dm the person automatically gets
+        // out of the room.
         socket.dmPartner = toUser;
 
         const dmMessages = await DirectMessage.find({
