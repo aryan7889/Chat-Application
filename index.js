@@ -27,6 +27,8 @@ mongoose.connect("mongodb://127.0.0.1:27017/chatapp")
     console.log(err);
 });
 
+
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
